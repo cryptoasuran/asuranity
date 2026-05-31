@@ -1,20 +1,35 @@
 import { ethers } from 'ethers';
 import { PatternMatcher } from '../../core/PatternMatcher';
+import { AddressValidator } from '../../core/AddressValidator';
 
 export class PolygonGenerator {
   constructor(config = {}) {
     this.config = {
+      chainId: 137,
+      symbol: 'MATIC',
+      explorer: 'https://polygonscan.com',
+      rpc: 'https://polygon-rpc.com',
       derivationPath: config.derivationPath || "m/44'/60'/0'/0",
-      addressFormat: config.addressFormat || 'hex',
       checksummed: config.checksummed !== false,
       ...config
     };
+    
     this.stats = {
       generated: 0,
       checked: 0,
       matches: 0,
-      startTime: null
+      startTime: null,
+      hashRate: 0
     };
+    
+    this.cache = new Map();
+    this.provider = null;
+  }
+
+  async initialize() {
+    if (this.config.rpc) {
+      this.provider = new ethers.JsonRpcProvider(this.config.rpc);
+    }
   }
 
   async generate(pattern, options = {}) {
@@ -47,6 +62,9 @@ export class PolygonGenerator {
       mnemonic: wallet.mnemonic?.phrase,
       derivationPath: this.config.derivationPath,
       network: 'polygon',
+      chainId: this.config.chainId,
+      symbol: this.config.symbol,
+      explorer: this.config.explorer,
       timestamp: Date.now()
     };
   }
@@ -77,6 +95,7 @@ export class PolygonGenerator {
       mnemonic,
       derivationPath: path,
       network: 'polygon',
+      chainId: this.config.chainId,
       index
     };
   }
@@ -88,20 +107,43 @@ export class PolygonGenerator {
       address: this.formatAddress(wallet.address),
       privateKey: wallet.privateKey,
       publicKey: wallet.publicKey,
-      network: 'polygon'
+      network: 'polygon',
+      chainId: this.config.chainId
     };
   }
 
-  validateAddress(address) {
-    try {
-      return ethers.isAddress(address);
-    } catch {
-      return false;
+  async generateHDWallet(mnemonic, count = 10) {
+    const addresses = [];
+    for (let i = 0; i < count; i++) {
+      addresses.push(await this.generateFromMnemonic(mnemonic, i));
     }
+    return addresses;
+  }
+
+  validateAddress(address) {
+    return AddressValidator.validateEVM(address);
   }
 
   getAddressFromPublicKey(publicKey) {
     return ethers.computeAddress(publicKey);
+  }
+
+  async getBalance(address) {
+    if (!this.provider) {
+      throw new Error('Provider not initialized');
+    }
+    return this.provider.getBalance(address);
+  }
+
+  async getTransactionCount(address) {
+    if (!this.provider) {
+      throw new Error('Provider not initialized');
+    }
+    return this.provider.getTransactionCount(address);
+  }
+
+  getExplorerUrl(address) {
+    return `${this.config.explorer}/address/${address}`;
   }
 
   updateStats() {
@@ -119,7 +161,8 @@ export class PolygonGenerator {
       generated: 0,
       checked: 0,
       matches: 0,
-      startTime: Date.now()
+      startTime: Date.now(),
+      hashRate: 0
     };
   }
 
@@ -135,87 +178,12 @@ export class PolygonGenerator {
   static getNetworkInfo() {
     return {
       name: 'Polygon',
-      type: 'EVM',
-      chainId: this.getChainId(),
-      symbol: this.getSymbol(),
-      decimals: 18,
-      explorer: this.getExplorer()
+      chainId: 137,
+      symbol: 'MATIC',
+      explorer: 'https://polygonscan.com',
+      rpc: 'https://polygon-rpc.com',
+      type: 'EVM'
     };
-  }
-
-  static getChainId() {
-    const chainIds = {
-      'Ethereum': 1,
-      'BSC': 56,
-      'Polygon': 137,
-      'Arbitrum': 42161,
-      'Optimism': 10,
-      'Avalanche': 43114,
-      'Fantom': 250,
-      'Cronos': 25,
-      'Moonbeam': 1284,
-      'Harmony': 1666600000,
-      'Celo': 42220,
-      'Aurora': 1313161554,
-      'Gnosis': 100,
-      'Metis': 1088,
-      'Base': 8453,
-      'zkSync': 324,
-      'Linea': 59144,
-      'Scroll': 534352,
-      'Mantle': 5000
-    };
-    return chainIds['Polygon'] || 1;
-  }
-
-  static getSymbol() {
-    const symbols = {
-      'Ethereum': 'ETH',
-      'BSC': 'BNB',
-      'Polygon': 'MATIC',
-      'Arbitrum': 'ETH',
-      'Optimism': 'ETH',
-      'Avalanche': 'AVAX',
-      'Fantom': 'FTM',
-      'Cronos': 'CRO',
-      'Moonbeam': 'GLMR',
-      'Harmony': 'ONE',
-      'Celo': 'CELO',
-      'Aurora': 'ETH',
-      'Gnosis': 'xDAI',
-      'Metis': 'METIS',
-      'Base': 'ETH',
-      'zkSync': 'ETH',
-      'Linea': 'ETH',
-      'Scroll': 'ETH',
-      'Mantle': 'MNT'
-    };
-    return symbols['Polygon'] || 'ETH';
-  }
-
-  static getExplorer() {
-    const explorers = {
-      'Ethereum': 'https://etherscan.io',
-      'BSC': 'https://bscscan.com',
-      'Polygon': 'https://polygonscan.com',
-      'Arbitrum': 'https://arbiscan.io',
-      'Optimism': 'https://optimistic.etherscan.io',
-      'Avalanche': 'https://snowtrace.io',
-      'Fantom': 'https://ftmscan.com',
-      'Cronos': 'https://cronoscan.com',
-      'Moonbeam': 'https://moonscan.io',
-      'Harmony': 'https://explorer.harmony.one',
-      'Celo': 'https://celoscan.io',
-      'Aurora': 'https://aurorascan.dev',
-      'Gnosis': 'https://gnosisscan.io',
-      'Metis': 'https://andromeda-explorer.metis.io',
-      'Base': 'https://basescan.org',
-      'zkSync': 'https://explorer.zksync.io',
-      'Linea': 'https://lineascan.build',
-      'Scroll': 'https://scrollscan.com',
-      'Mantle': 'https://explorer.mantle.xyz'
-    };
-    return explorers['Polygon'] || 'https://etherscan.io';
   }
 }
 
